@@ -1,0 +1,6 @@
+# Configuration Data
+dashBrakeCom: null
+rpmCom: null
+speedCom: null
+messageInterval: 1
+verbose: true
