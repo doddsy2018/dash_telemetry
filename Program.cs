@@ -11,6 +11,7 @@ using System.Collections;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using System.IO;
+using System.Linq;
 
 namespace simDash
 {
@@ -27,6 +28,8 @@ namespace simDash
         //private static Queue inputQueue1;    // From Arduino to App
         private static Configuration appConfig;
 
+        private static int currentRPM;
+        private static int lastRPM;
 
         public static void StartSerialThreads()
         {
@@ -65,7 +68,7 @@ namespace simDash
         public static void StreamThreadLoop1()
         {
             // Opens the connection on the serial port
-            SerialPort stream1 = new SerialPort(appConfig.dashBrakeCom, 115200, Parity.None);
+            SerialPort stream1 = new SerialPort(appConfig.dashBrakeCom, appConfig.baudRate, Parity.None);
             stream1.Open();
             Console.WriteLine("Dash Brake Controller COM Port Open on " + appConfig.dashBrakeCom);
             // Looping
@@ -83,7 +86,7 @@ namespace simDash
         public static void StreamThreadLoop2()
         {
             // Opens the connection on the serial port
-            SerialPort stream2 = new SerialPort(appConfig.speedCom, 115200, Parity.None);
+            SerialPort stream2 = new SerialPort(appConfig.speedCom, appConfig.baudRate, Parity.None);
             stream2.Open();
             Console.WriteLine("Speed Controller COM Port Open " + appConfig.speedCom);
             // Looping
@@ -101,7 +104,7 @@ namespace simDash
         public static void StreamThreadLoop3()
         {
             // Opens the connection on the serial port
-            SerialPort stream3 = new SerialPort(appConfig.rpmCom, 115200, Parity.None);
+            SerialPort stream3 = new SerialPort(appConfig.rpmCom, appConfig.baudRate, Parity.None);
             stream3.Open();
             Console.WriteLine("RPM Controller COM Port Open on " + appConfig.rpmCom);
             // Looping
@@ -144,36 +147,66 @@ namespace simDash
             gearDict.Add(118, "5");
             gearDict.Add(119, "6");
             gearDict.Add(120, "7");
+            gearDict.Add(121, "8");
 
-            //SerialPort serialPort = new SerialPort("COM4", 115200, Parity.None);
-            //serialPort.WriteTimeout = 10;
-            //serialPort.Open();
 
             StartSerialThreads();
+
+            List<int> rpmBuffer = new List<int>(new int[appConfig.rpmBufferSize]);
+            List<double> oilPressureBuffer = new List<double>(new double[appConfig.oilPresBufferSize]);
+            List<double> oilTempBuffer = new List<double>(new double[appConfig.oilTempBufferSize]);
+            //Console.WriteLine(string.Join(", ", rpmBuffer));
+            //Console.WriteLine(rpmBuffer.Average().ToString());
 
             int msgCount = 0;
             while (true)
             {
                 uDP.readPackets();  //Read Packets ever loop iteration
-
-
                 //Console.WriteLine(uDP.Rpm + " " + uDP.Speed + " " + uDP.GearNumGears);
 
-                myMsg.rpm = uDP.Rpm;
+                rpmBuffer.Add(uDP.Rpm);
+                rpmBuffer.RemoveAt(0);
+                currentRPM = Convert.ToInt32(rpmBuffer.Average()*appConfig.rpmScaleFactor);
+                // Case where RPM goes up to much for increment
+                if ((currentRPM - lastRPM) > appConfig.maxRpmInc)
+                {
+                    currentRPM = lastRPM + appConfig.maxRpmInc;
+                }
+                // Case where RPM goes up to much for increment
+                else if ((currentRPM - lastRPM) < (-1 * appConfig.maxRpmInc))
+                {
+                    currentRPM = lastRPM - appConfig.maxRpmInc;
+                }
+                lastRPM = currentRPM;
+                myMsg.rpm = (ushort)currentRPM;
+
+                //Console.WriteLine(string.Join(", ", rpmBuffer));
+                //Console.WriteLine(rpmBuffer.Average().ToString());
+
                 myMsg.speed = Math.Round(uDP.Speed * 2.23694,2);  //mps to mph
                 myMsg.fuel = Math.Round(uDP.FuelLevel*100,2);
                 myMsg.brake =  uDP.Brake*4;
 
-                double OilTemp= (uDP.OilTempCelsius * 9 / 5)+32;
-                myMsg.oiltemp = Math.Round(OilTemp, 2);  // Celsius to F
+                //double oilTemp= (uDP.OilTempCelsius * 9 / 5) + 32 + appConfig.oilTempOffset; // Celsius to F
+                double oilTemp = uDP.OilTempCelsius + appConfig.oilTempOffset; // Celsius to F
+                oilTempBuffer.Add(oilTemp);
+                oilTempBuffer.RemoveAt(0);
+                myMsg.oiltemp = Math.Round(oilTemp, 2);  
 
-                myMsg.oilpres = Math.Round(uDP.OilPressureKPa * 0.145038,1);  //KPa to PSI
+                double oilPressure = Math.Round((uDP.OilPressureKPa * 0.145038)+ appConfig.oilPresOffset, 1); //KPa to PSI
+                oilPressureBuffer.Add(oilPressure);
+                oilPressureBuffer.RemoveAt(0);
+                oilPressure= Math.Round(oilPressureBuffer.Average(), 2);
+                if (oilPressure < 20)
+                {
+                    oilPressure = 20;
+                }
+                myMsg.oilpres = oilPressure;
+
                 int currentGear = uDP.GearNumGears;
                 myMsg.gear = gearDict[currentGear];
 
                 string output = JsonConvert.SerializeObject(myMsg);
-
-                //Console.WriteLine(output);
 
                 if (appConfig.verbose)
                 {
@@ -182,21 +215,14 @@ namespace simDash
                 }
 
 
-                output = output + "\n";
-
                 if (msgCount > appConfig.messageInterval)
                 {
+                    output = output + "\n";
                     SendToArduino(output);
                     msgCount = 0;
                 }
 
                 msgCount++;
-
-                //serialPort.Write(output.ToString());
-
-                //System.Threading.Thread.Sleep(10);
-                //string a = serialPort.ReadExisting();
-                //Console.WriteLine(a);
 
 
                 /*

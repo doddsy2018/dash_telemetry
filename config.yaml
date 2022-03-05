@@ -1,6 +1,25 @@
 # Configuration Data
+
+# COM Prot Settings
+
+baudRate: 115200
+
 dashBrakeCom: null
 rpmCom: null
 speedCom: null
+
+# Stream Settings
 messageInterval: 1
+
+# Value Buffer Settings
+rpmScaleFactor: 0.75
+maxRpmInc: 500
+rpmBufferSize: 20
+
+oilTempBufferSize: 10
+oilTempOffset: -40
+
+oilPresBufferSize: 10
+oilPresOffset: 0
+
 verbose: true
